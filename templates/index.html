@@ -31,6 +31,14 @@
     .page-header p{color:var(--muted);font-size:14px;margin-top:4px}
     .content-grid{display:grid;grid-template-columns:340px 1fr;gap:20px;align-items:start}
     .search-panel{background:var(--card);border-radius:var(--radius);padding:24px;box-shadow:0 1px 3px rgba(0,0,0,0.06)}
+    .level-toggle{display:flex;gap:6px;margin-bottom:18px;background:#F1F5F9;padding:5px;border-radius:12px}
+    .level-btn{flex:1;padding:9px 6px;border:none;background:transparent;border-radius:8px;font-size:13px;font-weight:600;font-family:'Inter',sans-serif;color:var(--muted);cursor:pointer;transition:all 0.18s}
+    .level-btn:hover{color:var(--text)}
+    .level-btn.active{background:#fff;color:var(--saffron);box-shadow:0 1px 3px rgba(0,0,0,0.1)}
+    .yearchart{display:flex;align-items:flex-end;gap:3px;height:70px;margin-top:8px;padding:8px 0}
+    .yearbar{flex:1;background:#E2E8F0;border-radius:3px 3px 0 0;position:relative;min-height:3px;transition:height 0.3s}
+    .yearbar.cur{background:var(--saffron)}
+    .yearbar span{position:absolute;bottom:-16px;left:0;right:0;text-align:center;font-size:8px;color:var(--muted)}
     .form-group{margin-bottom:18px}
     .form-label{display:block;font-size:13px;font-weight:600;color:var(--text);margin-bottom:8px}
     .search-wrapper{position:relative}
@@ -184,8 +192,14 @@
   <div class="content-grid">
     <div class="search-panel">
 
+      <div class="level-toggle" id="levelToggle">
+        <button class="level-btn active" data-level="place" onclick="setLevel('place')">📍 Place</button>
+        <button class="level-btn" data-level="city" onclick="setLevel('city')">🏙️ City</button>
+        <button class="level-btn" data-level="state" onclick="setLevel('state')">🗺️ State</button>
+      </div>
+
       <div class="form-group">
-        <label class="form-label">Search Place</label>
+        <label class="form-label" id="searchLabel">Search Place</label>
         <div class="search-wrapper">
           <span class="search-icon">🔍</span>
           <input type="text" class="search-input" id="searchInput"
@@ -195,12 +209,24 @@
         </div>
       </div>
 
-      <div class="form-group">
+      <div class="form-group" id="dateGroup">
         <label class="form-label">Select Date</label>
         <input type="date" class="date-input" id="dateInput"/>
       </div>
 
-      <div class="form-group">
+      <div class="form-group" id="monthGroup" style="display:none">
+        <label class="form-label">Select Month</label>
+        <select class="date-input" id="monthInput">
+          <option value="1">January</option><option value="2">February</option>
+          <option value="3">March</option><option value="4">April</option>
+          <option value="5">May</option><option value="6">June</option>
+          <option value="7">July</option><option value="8">August</option>
+          <option value="9">September</option><option value="10">October</option>
+          <option value="11">November</option><option value="12">December</option>
+        </select>
+      </div>
+
+      <div class="form-group" id="timeGroup">
         <label class="form-label">Select Time of Day</label>
         <div class="time-grid">
           <button class="time-btn" data-time="morning" onclick="selectTime('morning')">
@@ -260,6 +286,31 @@
   let selectedPlace = null;
   let selectedTime  = 'afternoon';
   let autoTimeout   = null;
+  let currentLevel  = 'place';        // place | city | state
+  let selectedRegion = null;          // {name, state, level} for city/state modes
+
+  const LEVEL_CFG = {
+    place: {label:'Search Place',  ph:'e.g. Taj Mahal, Goa Beaches...'},
+    city:  {label:'Search City',   ph:'e.g. Jaipur, Varanasi, Goa...'},
+    state: {label:'Search State',  ph:'e.g. Rajasthan, Kerala...'},
+  };
+
+  function setLevel(lvl){
+    currentLevel = lvl;
+    selectedPlace=null; selectedRegion=null;
+    document.querySelectorAll('.level-btn').forEach(b=>b.classList.toggle('active', b.dataset.level===lvl));
+    document.getElementById('searchLabel').textContent = LEVEL_CFG[lvl].label;
+    const inp=document.getElementById('searchInput');
+    inp.value=''; inp.placeholder=LEVEL_CFG[lvl].ph;
+    document.getElementById('searchClear').style.display='none';
+    document.getElementById('predictBtn').disabled=true;
+    // place mode uses date+time; city/state use a simple month picker
+    const isPlace = lvl==='place';
+    document.getElementById('dateGroup').style.display = isPlace?'block':'none';
+    document.getElementById('timeGroup').style.display = isPlace?'block':'none';
+    document.getElementById('monthGroup').style.display = isPlace?'none':'block';
+    closeAuto();
+  }
 
   document.addEventListener('DOMContentLoaded', () => {
     loadPopular();
@@ -304,7 +355,11 @@
   function onSearch(e) {
     const q = e.target.value.trim();
     document.getElementById('searchClear').style.display = q ? 'block' : 'none';
-    if(q !== (selectedPlace?.name || '')) { selectedPlace=null; document.getElementById('predictBtn').disabled=true; }
+    if(currentLevel==='place'){
+      if(q !== (selectedPlace?.name || '')) { selectedPlace=null; document.getElementById('predictBtn').disabled=true; }
+    } else {
+      if(q !== (selectedRegion?.name || '')) { selectedRegion=null; document.getElementById('predictBtn').disabled=true; }
+    }
     clearTimeout(autoTimeout);
     if(q.length<2) { closeAuto(); return; }
     autoTimeout = setTimeout(() => fetchAuto(q), 200);
@@ -312,10 +367,36 @@
 
   async function fetchAuto(q) {
     try {
-      const res  = await fetch(`/api/search?q=${encodeURIComponent(q)}&limit=10`);
+      let url;
+      if(currentLevel==='place') url = `/api/search?q=${encodeURIComponent(q)}&limit=10`;
+      else url = `/api/search_region?q=${encodeURIComponent(q)}&level=${currentLevel}&limit=10`;
+      const res  = await fetch(url);
       const data = await res.json();
-      showAuto(data);
+      (currentLevel==='place') ? showAuto(data) : showAutoRegion(data);
     } catch(e) { console.error(e); }
+  }
+
+  function showAutoRegion(items){
+    const list = document.getElementById('autoList');
+    if(!items.length){ list.style.display='none'; return; }
+    const icon = currentLevel==='state' ? '🗺️' : '🏙️';
+    list.innerHTML = items.map(it => `
+      <div class="autocomplete-item" onclick='selectRegion(${JSON.stringify(it).replace(/'/g,"\\'")})'>
+        <span class="place-emoji">${icon}</span>
+        <div>
+          <div class="place-name">${it.name}</div>
+          ${it.state && it.level==='city' ? `<div class="place-loc">${it.state}</div>`:''}
+        </div>
+      </div>`).join('');
+    list.style.display='block';
+  }
+
+  function selectRegion(it){
+    selectedRegion = it;
+    document.getElementById('searchInput').value = it.name + (it.state && it.level==='city' ? `, ${it.state}`:'');
+    document.getElementById('searchClear').style.display='block';
+    document.getElementById('predictBtn').disabled=false;
+    closeAuto();
   }
 
   function showAuto(places) {
@@ -343,7 +424,7 @@
   }
 
   function clearSearch() {
-    selectedPlace=null;
+    selectedPlace=null; selectedRegion=null;
     document.getElementById('searchInput').value='';
     document.getElementById('searchClear').style.display='none';
     document.getElementById('predictBtn').disabled=true;
@@ -351,6 +432,7 @@
   }
 
   async function predict() {
+    if(currentLevel!=='place'){ return predictRegion(); }
     if(!selectedPlace) { showToast('Please select a place first'); return; }
     const dateVal = document.getElementById('dateInput').value;
     if(!dateVal) { showToast('Please select a date'); return; }
@@ -372,6 +454,64 @@
     } finally {
       showLoading(false);
     }
+  }
+
+  async function predictRegion(){
+    if(!selectedRegion){ showToast('Please select a '+currentLevel+' first'); return; }
+    const month = document.getElementById('monthInput').value || 1;
+    showLoading(true);
+    try{
+      const url = currentLevel==='city'
+        ? `/api/city_predict?city=${encodeURIComponent(selectedRegion.name)}&month=${month}`
+        : `/api/state_predict?state=${encodeURIComponent(selectedRegion.name)}&month=${month}`;
+      const res = await fetch(url);
+      const data = await res.json();
+      if(data.error){ showToast(data.error); return; }
+      renderRegionResults(data);
+    }catch(e){ console.error(e); showToast('Something went wrong. Please try again.'); }
+    finally{ showLoading(false); }
+  }
+
+  function renderRegionResults(d){
+    const panel = document.getElementById('resultsPanel');
+    const cls = d.label.toLowerCase();
+    const icon = d.level==='state' ? '🗺️' : '🏙️';
+    const curve = d.year_curve || [];
+    const mx = Math.max(...curve.filter(v=>v!=null), 1);
+    const MN = ['','Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const bars = curve.map((v,i)=>{
+      const h = v==null?3:Math.max(3, Math.round(v/mx*100));
+      const cur = (i+1)===d.month ? 'cur':'';
+      return `<div class="yearbar ${cur}" style="height:${h}%"><span>${MN[i+1][0]}</span></div>`;
+    }).join('');
+    const reasonsHTML = (d.reasons||[]).map(r=>
+      `<div class="reason-box ${cls}"><span>💡</span><span>${r}</span></div>`).join('');
+    const sub = d.level==='state'
+      ? `${d.cities_count} cities`
+      : (d.state||'');
+    panel.innerHTML = `
+      <div class="result-card">
+        <div class="prediction-section">
+          <div class="prediction-for">
+            <div class="pred-place">${icon} ${d.name}</div>
+            <div class="pred-datetime">${sub} · ${d.month_name}</div>
+          </div>
+          <div class="crowd-badge ${cls}">
+            <span class="badge-icon">${d.icon}</span>
+            <div><div class="badge-label">${d.status}</div>
+            <div class="badge-score">Crowd Index: ${d.score}</div></div>
+          </div>
+        </div>
+        <div style="padding:0 20px 8px"><div class="yearchart">${bars}</div></div>
+        <div style="padding:16px 20px">
+          ${reasonsHTML}
+          <div class="reason-box ${cls}" style="margin-top:8px">
+            <span>📅</span><span>Quietest month: <b>${d.quietest_month||'—'}</b> · Busiest: <b>${d.busiest_month||'—'}</b></span>
+          </div>
+        </div>
+      </div>`;
+    panel.style.display='block';
+    panel.scrollIntoView({behavior:'smooth', block:'start'});
   }
 
   function renderResults(pred, recs) {
