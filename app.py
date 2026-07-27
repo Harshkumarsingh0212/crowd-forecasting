@@ -25,8 +25,8 @@ DRIVE = {
     'features'    : '1B7pCpjI1ezrwhjiLqS5ZbX8Sh5_IDa52',
     'shap'        : '1gE68_5TaBhvY4sPw2M_9vYF04wINC9lT',
     'time_lookup' : '1ixpJYVEfcoPeqKTDglKBWTpu8XFmUnf-',
-    'city_season' : '1su3VPny5tya6seLPE0DYE2cbYUUynyyk',  # v4 FINAL: physics gates (cold/rain/park from lat+temp+rainfall) + fitted festival weight (w=0.20) + regional festival table — zero name lists
-    'state_season': 'REPLACE_WITH_STATE_SCORES_FILE_ID',    # state×month scores (place-count-weighted city aggregation)
+    'city_season' : '1Td0JubnwvcPqst1SUlI3fq1o8znYKxej',  # v5 FINAL: B weights (0.20/0.369/0.308/0.123) + physics gates + Jul-Jan festivals — sums to 1.0
+    'state_season': '1_VP88pxbQYbO9tU0bpl6xpFodh3VN8Y0',    # state×month scores (place-count-weighted city aggregation, B weights)
     'overrides'   : '1kSXZPQ0x2wUuGsYd2Qn53u5tg3f97JJ_',    # falls tags + landmarks (incl. 14 govt-verified via ASI data)
     'deviation'   : '1pTJMOR9b2sLZ3XzVgGSeJWz2DYhamupw',    # per-place deviation signal (z_place)
     'reconcile'   : '1eZWye6DdhEpGiayH4LLuiJFSLJZweKh-',    # per-city reconciliation factor
