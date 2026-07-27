@@ -26,6 +26,7 @@ DRIVE = {
     'shap'        : '1gE68_5TaBhvY4sPw2M_9vYF04wINC9lT',
     'time_lookup' : '1ixpJYVEfcoPeqKTDglKBWTpu8XFmUnf-',
     'city_season' : '1su3VPny5tya6seLPE0DYE2cbYUUynyyk',  # v4 FINAL: physics gates (cold/rain/park from lat+temp+rainfall) + fitted festival weight (w=0.20) + regional festival table — zero name lists
+    'state_season': 'REPLACE_WITH_STATE_SCORES_FILE_ID',    # state×month scores (place-count-weighted city aggregation)
     'overrides'   : '1kSXZPQ0x2wUuGsYd2Qn53u5tg3f97JJ_',    # falls tags + landmarks (incl. 14 govt-verified via ASI data)
     'deviation'   : '1pTJMOR9b2sLZ3XzVgGSeJWz2DYhamupw',    # per-place deviation signal (z_place)
     'reconcile'   : '1eZWye6DdhEpGiayH4LLuiJFSLJZweKh-',    # per-city reconciliation factor
@@ -76,6 +77,31 @@ CITY_SEASON_LC = {}
 for k, v in CITY_SEASON.items():
     city, m = k.rsplit('|', 1)
     CITY_SEASON_LC[(city.lower().strip(), int(m))] = v
+
+# NEW: state-level seasonal scores (place-count-weighted aggregation of cities).
+# key format "State|Month" -> 0-100. Enables city/state zoom levels in the UI.
+STATE_SEASON = {}
+STATE_SEASON_LC = {}
+try:
+    state_path = gdrive_get(DRIVE['state_season'], 'state_season_scores.json')
+    with open(state_path) as f:
+        STATE_SEASON = json.load(f)
+    for k, v in STATE_SEASON.items():
+        st, m = k.rsplit('|', 1)
+        STATE_SEASON_LC[(st.lower().strip(), int(m))] = v
+    print(f'State scores loaded: {len(STATE_SEASON)} state-month entries')
+except Exception as e:
+    print(f'State scores not loaded (state prediction disabled): {e}')
+
+# city -> state map + list of cities per state (built from PLACE_INFO, for lookups)
+CITY_TO_STATE = {}
+STATE_CITIES = {}
+for _pid, _info in (PLACE_INFO.items() if isinstance(PLACE_INFO, dict) else []):
+    _c = str(_info.get('city', '')).lower().strip()
+    _s = str(_info.get('state', '')).strip()
+    if _c and _s and _s.lower() not in ('nan', ''):
+        CITY_TO_STATE[_c] = _s
+        STATE_CITIES.setdefault(_s.lower().strip(), set()).add(_c)
 
 # Falls tags + landmark IDs (closure/monsoon physics now lives INSIDE the
 # v4 city-season scores — derived from latitude/temp/rainfall/type features,
@@ -592,6 +618,21 @@ def score_to_label(score):
     if score >= 33: return 'Medium'
     return 'Low'
 
+# ── City / State label helpers (relative to their OWN yearly range) ──
+def state_year_scores(state):
+    if not state: return []
+    return [STATE_SEASON_LC.get((state.lower().strip(), m)) for m in range(1,13)]
+
+def label_relative_to(year_scores, score):
+    """Generic relative labeller: rank a score within a 12-month list."""
+    ys = [s for s in year_scores if s is not None]
+    if not ys or score is None:
+        return 'Medium' if score is None else ('High' if score>=60 else ('Medium' if score>=33 else 'Low'))
+    lo, hi = min(ys), max(ys)
+    if hi == lo: return 'Medium'
+    pct = (score - lo) / (hi - lo)
+    return 'High' if pct>=0.66 else ('Medium' if pct>=0.33 else 'Low')
+
 # Festival intensity by month (higher = more/bigger Hindu festivals nationally).
 # Oct-Nov = Navratri/Dussehra/Diwali peak; Mar = Holi; Aug-Sep = Janmashtami/Ganesh.
 FESTIVAL_INTENSITY = {
@@ -808,6 +849,27 @@ def search():
                      'state':r['state'],'type':r['type'],'emoji':TYPE_EMOJI.get(r['type'],'📍')}
                     for r in results])
 
+@app.route('/api/search_region')
+def search_region():
+    """Type-ahead for cities or states. ?q=jai&level=city  or  ?level=state"""
+    q = request.args.get('q','').lower().strip()
+    level = request.args.get('level','city')
+    lim = min(int(request.args.get('limit',10)), 20)
+    if len(q) < 2: return jsonify([])
+    if level == 'state':
+        names = sorted(set(k.rsplit('|',1)[0] for k in STATE_SEASON))
+        out = [{'name': n, 'state': n, 'level':'state'} for n in names if q in n.lower()][:lim]
+    else:
+        names = sorted(set(k.rsplit('|',1)[0] for k in CITY_SEASON))
+        seen, out = set(), []
+        for n in names:
+            if q in n.lower() and n.lower() not in seen:
+                seen.add(n.lower())
+                out.append({'name': n, 'state': CITY_TO_STATE.get(n.lower().strip(),''),
+                            'level':'city'})
+            if len(out) >= lim: break
+    return jsonify(out)
+
 @app.route('/api/popular')
 def popular():
     results=[]
@@ -972,6 +1034,87 @@ def api_festivals():
         out = [f for f in out if (f.get('scope') == 'city' and str(f.get('value','')).lower() in cl)
                or (f.get('scope') == 'state')]
     return jsonify({'count': len(out), 'festivals': out})
+
+
+MONTH_NAMES = ['','January','February','March','April','May','June','July',
+               'August','September','October','November','December']
+
+def _season_reason(month, score, year_scores):
+    """Build a short human reason for a city/state seasonal score."""
+    ys = [s for s in year_scores if s is not None]
+    reasons = []
+    if ys:
+        peak = max(range(1,13), key=lambda m: year_scores[m-1] if year_scores[m-1] is not None else -1)
+        low  = min(range(1,13), key=lambda m: year_scores[m-1] if year_scores[m-1] is not None else 999)
+        if month == peak:
+            reasons.append(f"{MONTH_NAMES[month]} is typically the busiest month here")
+        elif month == low:
+            reasons.append(f"{MONTH_NAMES[month]} is usually the quietest month here")
+    if month in (6,7,8,9):
+        reasons.append("Monsoon season affects much of the region")
+    if month in (11,12,1,2):
+        reasons.append("Pleasant winter weather draws more visitors")
+    return reasons or ["Seasonal crowd pattern"]
+
+@app.route('/api/city_predict')
+def api_city_predict():
+    """City-level crowd for a month. ?city=Jaipur&month=12"""
+    city  = request.args.get('city', '').strip()
+    month = request.args.get('month', type=int) or 1
+    if not city:
+        return jsonify({'error': 'city required'}), 400
+    score = CITY_SEASON_LC.get((city.lower().strip(), month))
+    if score is None:
+        return jsonify({'error': f'No data for {city}'}), 404
+    yr = city_year_scores(city)
+    label = label_relative_to(yr, score)
+    # best / worst months to visit
+    valid = [(m, yr[m-1]) for m in range(1,13) if yr[m-1] is not None]
+    best  = min(valid, key=lambda t: t[1])[0] if valid else None
+    peak  = max(valid, key=lambda t: t[1])[0] if valid else None
+    state = CITY_TO_STATE.get(city.lower().strip(), '')
+    return jsonify({
+        'level': 'city', 'name': city, 'state': state, 'month': month,
+        'month_name': MONTH_NAMES[month], 'score': round(score,1), 'label': label,
+        'color': CROWD_COLOR[label], 'status': CROWD_LABEL[label], 'icon': CROWD_ICON[label],
+        'reasons': _season_reason(month, score, yr),
+        'quietest_month': MONTH_NAMES[best] if best else None,
+        'busiest_month': MONTH_NAMES[peak] if peak else None,
+        'year_curve': [yr[m-1] for m in range(1,13)],
+    })
+
+@app.route('/api/state_predict')
+def api_state_predict():
+    """State-level crowd for a month. ?state=Rajasthan&month=12"""
+    state = request.args.get('state', '').strip()
+    month = request.args.get('month', type=int) or 1
+    if not state:
+        return jsonify({'error': 'state required'}), 400
+    score = STATE_SEASON_LC.get((state.lower().strip(), month))
+    if score is None:
+        return jsonify({'error': f'No data for {state}'}), 404
+    yr = state_year_scores(state)
+    label = label_relative_to(yr, score)
+    valid = [(m, yr[m-1]) for m in range(1,13) if yr[m-1] is not None]
+    best  = min(valid, key=lambda t: t[1])[0] if valid else None
+    peak  = max(valid, key=lambda t: t[1])[0] if valid else None
+    ncities = len(STATE_CITIES.get(state.lower().strip(), []))
+    return jsonify({
+        'level': 'state', 'name': state, 'month': month,
+        'month_name': MONTH_NAMES[month], 'score': round(score,1), 'label': label,
+        'color': CROWD_COLOR[label], 'status': CROWD_LABEL[label], 'icon': CROWD_ICON[label],
+        'reasons': _season_reason(month, score, yr),
+        'quietest_month': MONTH_NAMES[best] if best else None,
+        'busiest_month': MONTH_NAMES[peak] if peak else None,
+        'cities_count': ncities,
+        'year_curve': [yr[m-1] for m in range(1,13)],
+    })
+
+@app.route('/api/states')
+def api_states():
+    """List all states that have scores (for the UI dropdown)."""
+    states = sorted(set(k.rsplit('|',1)[0] for k in STATE_SEASON))
+    return jsonify({'count': len(states), 'states': states})
 
 
 @app.route('/api/feedback', methods=['POST'])
