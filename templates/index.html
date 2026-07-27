@@ -217,12 +217,10 @@
       <div class="form-group" id="monthGroup" style="display:none">
         <label class="form-label">Select Month</label>
         <select class="date-input" id="monthInput">
-          <option value="1">January</option><option value="2">February</option>
-          <option value="3">March</option><option value="4">April</option>
-          <option value="5">May</option><option value="6">June</option>
           <option value="7">July</option><option value="8">August</option>
           <option value="9">September</option><option value="10">October</option>
           <option value="11">November</option><option value="12">December</option>
+          <option value="1">January</option>
         </select>
       </div>
 
@@ -477,12 +475,15 @@
     const cls = d.label.toLowerCase();
     const icon = d.level==='state' ? '🗺️' : '🏙️';
     const curve = d.year_curve || [];
-    const mx = Math.max(...curve.filter(v=>v!=null), 1);
     const MN = ['','Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-    const bars = curve.map((v,i)=>{
-      const h = v==null?3:Math.max(3, Math.round(v/mx*100));
-      const cur = (i+1)===d.month ? 'cur':'';
-      return `<div class="yearbar ${cur}" style="height:${h}%"><span>${MN[i+1][0]}</span></div>`;
+    // Only show the 6-month forecast window (Jul -> Jan), matching project scope.
+    const FORECAST = [7,8,9,10,11,12,1];
+    const fc = FORECAST.map(m => ({m, v: curve[m-1]}));
+    const mx = Math.max(...fc.map(o=>o.v).filter(v=>v!=null), 1);
+    const bars = fc.map(o=>{
+      const h = o.v==null?3:Math.max(3, Math.round(o.v/mx*100));
+      const cur = o.m===d.month ? 'cur':'';
+      return `<div class="yearbar ${cur}" style="height:${h}%"><span>${MN[o.m].slice(0,3)}</span></div>`;
     }).join('');
     const reasonsHTML = (d.reasons||[]).map(r=>
       `<div class="reason-box ${cls}"><span>💡</span><span>${r}</span></div>`).join('');
@@ -502,7 +503,10 @@
             <div class="badge-score">Crowd Index: ${d.score}</div></div>
           </div>
         </div>
-        <div style="padding:0 20px 8px"><div class="yearchart">${bars}</div></div>
+        <div style="padding:4px 20px 10px">
+          <div style="font-size:11px;color:var(--muted);font-weight:600;margin-bottom:2px">Next 6 months (crowd trend)</div>
+          <div class="yearchart">${bars}</div>
+        </div>
         <div style="padding:16px 20px">
           ${reasonsHTML}
           <div class="reason-box ${cls}" style="margin-top:8px">
